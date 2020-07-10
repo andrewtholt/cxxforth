@@ -3,18 +3,18 @@ project(cxxforth)
 
 add_executable(cxxforth cxxforth.cpp)
 
-add_custom_target(cxxforth.cpp.md ALL cxxforth cpp2md.fs
-    DEPENDS cxxforth.cpp cpp2md.fs
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generate cxxforth.cpp.md" VERBATIM
-    SOURCES cxxforth.cpp
-)
+# add_custom_target(cxxforth.cpp.md ALL build/cxxforth cpp2md.fs
+#    DEPENDS cxxforth.cpp cpp2md.fs
+#    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+#    COMMENT "Generate cxxforth.cpp.md" VERBATIM
+#    SOURCES cxxforth.cpp
+# )
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(CMAKE_CXX_FLAGS "-std=c++14 -Weverything -Wno-unused-macros -Wno-unused-const-variable -Wno-unused-function -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-global-constructors -Wno-exit-time-destructors -Wno-padded -Wno-missing-noreturn -Wno-array-bounds-pointer-arithmetic")
 else()
     # Settings for gcc
-    set(CMAKE_CXX_FLAGS "-std=c++1y -Wall -Wno-unused-function -Wno-array-bounds")
+    set(CMAKE_CXX_FLAGS "-std=c++14 -Wall -Wno-unused-function")
 endif()
 
 set(CXXFORTH_DATASPACE_SIZE "(16 * 1024 * sizeof(Cell))" CACHE STRING "Size of Forth dataspace in bytes")

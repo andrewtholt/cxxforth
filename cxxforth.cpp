@@ -127,7 +127,7 @@ Running cxxforth
 Once the `cxxforth` executable is built, you can run it like any other command-line utility.
 
 If you run it without any additional arguments, it will display a welcome
-message and then allow you to enter Forth commands.  Enter "bye" to exit.
+message and then aloow you to enter Forth commands.  Enter "bye" to exit.
 
 If there are any additional arguments, cxxforth will load and interpret those
 files.  For example, the `cxxforth/tests` directory contains a file `hello.fs`
@@ -148,7 +148,7 @@ I start by including headers from the C++ Standard Library.  I also include
 `cxxforth.h`, which declares exported functions and includes the
 `cxxforthconfig.h` file produced by the CMake build.
 
-A macro `CXXFORTH_DISABLE_FILE_ACCESS` can be defined to prevent cxxforth from
+A macro `CXXFORTH_ENABLE_FILE_ACCESS` can be defined to prevent cxxforth from
 defining words for opening, reading, and writing files.  You may want to do
 this on a platform that does not support file access, or if you don't need
 those words and want a smaller executable.
@@ -170,7 +170,7 @@ those words and want a smaller executable.
 #include <string>
 #include <thread>
 
-#ifndef CXXFORTH_DISABLE_FILE_ACCESS
+#ifdef CXXFORTH_ENABLE_FILE_ACCESS
 #include <cstdio>
 #include <fstream>
 #endif
@@ -179,7 +179,6 @@ using std::cerr;
 using std::cout;
 using std::endl;
 using std::exception;
-using std::isspace;
 using std::ptrdiff_t;
 using std::runtime_error;
 using std::size_t;
@@ -226,7 +225,7 @@ in case they have not been defined.
 ****/
 
 #ifndef CXXFORTH_VERSION
-#define CXXFORTH_VERSION "1.4.1"
+#define CXXFORTH_VERSION "1.1.5"
 #endif
 
 #ifndef CXXFORTH_DATASPACE_SIZE
@@ -447,7 +446,7 @@ executed.  This will be explained below in the **Inner Interpreter** section.
 
 ****/
 
-Xt* nextInstruction = nullptr;
+Xt* next = nullptr;
 
 /****
 
@@ -513,9 +512,9 @@ I need a buffer to store the result of the Forth `WORD` word.  As with the
 input buffer, I use a `string` so I don't need to worry about memory
 management.
 
-Note that while this is a `std:string`, its format is not that of a typical C++
-string.  The buffer returned by `WORD` has the word length as its first
-character.  That is, it is a Forth _counted string_.
+Note that while this is a `std:string`, its format is not a typical strings.
+The buffer returned by `WORD` has the word length as its first character.
+That is, it is a Forth _counted string_.
 
 ****/
 
@@ -642,10 +641,8 @@ standard words, I'll provide a brief description.
 
 class AbortException: public runtime_error {
 public:
-    explicit AbortException(const string& msg): runtime_error(msg) {}
-    explicit AbortException(const char* msg): runtime_error(msg) {}
-    explicit AbortException(const char* caddr, size_t count)
-        : runtime_error(string(caddr, count)) {}
+    AbortException(const string& msg): runtime_error(msg) {}
+    AbortException(const char* msg): runtime_error(msg) {}
 };
 
 // ABORT ( i*x -- ) ( R: j*x -- )
@@ -662,7 +659,8 @@ void abort() {
 void abortMessage() {
     auto count = SIZE_T(*dTop); pop();
     auto caddr = CHARPTR(*dTop); pop();
-    throw AbortException(caddr, count);
+    string message(caddr, count);
+    throw AbortException(message);
 }
 
 /****
@@ -808,19 +806,6 @@ void drop() {
     pop();
 }
 
-// DUP ( x -- x x )
-void dup() {
-    REQUIRE_DSTACK_DEPTH(1, "DUP");
-    REQUIRE_DSTACK_AVAILABLE(1, "DUP");
-    push(*dTop);
-}
-
-// SWAP ( x0 x1 -- x1 x0 )
-void swap() {
-    REQUIRE_DSTACK_DEPTH(2, "SWAP");
-    std::swap(*dTop, *(dTop - 1));
-}
-
 // PICK ( xu ... x1 x0 u -- xu ... x1 x0 xu )
 void pick() {
     REQUIRE_DSTACK_DEPTH(1, "PICK");
@@ -860,12 +845,6 @@ void rFetch() {
     REQUIRE_RSTACK_DEPTH(1, "R@");
     REQUIRE_DSTACK_AVAILABLE(1, "R@");
     push(*rTop);
-}
-
-// EXIT ( -- ) ( R: nest-sys -- )
-void exit() {
-    REQUIRE_RSTACK_DEPTH(1, "EXIT");
-    nextInstruction = reinterpret_cast<Xt*>(*rTop); rpop();
 }
 
 /****
@@ -1004,15 +983,9 @@ void cMoveUp() {
     auto length = SIZE_T(*dTop); pop();
     auto dst = CHARPTR(*dTop); pop();
     auto src = CHARPTR(*dTop); pop();
-    if (length > 0) {
-        auto offset = length - 1;
-        for (;;)
-        {
-            *(dst + offset) = *(src + offset);
-            if (offset == 0)
-                break;
-            offset--;
-        }
+    for (size_t i = 0; i < length; ++i) {
+        auto offset = length - i - 1;
+        *(src + offset) = *(dst + offset);
     }
 }
 
@@ -1220,25 +1193,13 @@ first byte, followed by the characters that made up the word.
 In a few places later in the C++ code, you will see the call sequence `bl();
 word(); count();`.  This corresponds to the Forth phrase `BL WORD COUNT`, which
 is how Forth code typically reads a space-delimited word from the input and
-gets its address and length.
-
-If the delimiter is BL (space), then in addition to treating a space as the
-delimiter, we will treat any of the other standard C++ whitespace characters as
-a delimiter.  This allows us to process input indented with tabs or split
-across lines.  This behavior is allowed by the Forth standard.
+get its address and length.
 
 The standards specify that the `WORD` buffer must contain a space character
 after the character data, but I'm not going to worry about this obsolescent
 requirement.
 
 ****/
-
-bool isWordDelimiterMatch(char delim, char c) {
-    if (delim == ' ')
-        return isspace(c);
-    else
-        return delim == c;
-}
 
 // WORD ( char "<chars>ccc<char>" -- c-addr )
 void word() {
@@ -1251,11 +1212,11 @@ void word() {
     auto inputSize = sourceBuffer.size();
 
     // Skip leading delimiters
-    while (sourceOffset < inputSize && isWordDelimiterMatch(delim, sourceBuffer[sourceOffset]))
+    while (sourceOffset < inputSize && sourceBuffer[sourceOffset] == delim)
         ++sourceOffset;
 
-    // Copy characters until we see a delimiter again.
-    while (sourceOffset < inputSize && !isWordDelimiterMatch(delim, sourceBuffer[sourceOffset])) {
+    // Copy characters until we see the delimiter again.
+    while (sourceOffset < inputSize && sourceBuffer[sourceOffset] != delim) {
         wordBuffer.push_back(sourceBuffer[sourceOffset]);
         ++sourceOffset;
     }
@@ -1508,7 +1469,7 @@ void ms() {
 // TIME&DATE ( -- +n1 +n2 +n3 +n4 +n5 +n6 )
 void timeAndDate () {
     REQUIRE_DSTACK_AVAILABLE(6, "TIME&DATE");
-    auto t = std::time(nullptr);
+    auto t = std::time(0);
     auto tm = std::localtime(&t);
     push(static_cast<Cell>(tm->tm_sec));
     push(static_cast<Cell>(tm->tm_min));
@@ -1525,7 +1486,7 @@ void timeAndDate () {
 // Like TIME&DATE, but returns UTC rather than local time.
 void utcTimeAndDate () {
     REQUIRE_DSTACK_AVAILABLE(6, "UTCTIME&DATE");
-    auto t = std::time(nullptr);
+    auto t = std::time(0);
     auto tm = std::gmtime(&t);
     push(static_cast<Cell>(tm->tm_sec));
     push(static_cast<Cell>(tm->tm_min));
@@ -1596,16 +1557,21 @@ anything to do with "returning".
 ****/
 
 void doColon() {
-    auto savedNext = nextInstruction;
+    auto savedNext = next;
 
     auto defn = Definition::executingWord;
 
-    nextInstruction = reinterpret_cast<Xt*>(defn->does);
-    while (*nextInstruction != exitXt) {
-        (*(nextInstruction++))->execute();
+    next = reinterpret_cast<Xt*>(defn->does);
+    while (*next != exitXt) {
+        (*(next++))->execute();
     }
 
-    nextInstruction = savedNext;
+    next = savedNext;
+}
+
+// EXIT ( -- ) ( R: nest-sys -- )
+void exit() {
+    throw runtime_error("EXIT should not be executed");
 }
 
 /****
@@ -1708,7 +1674,7 @@ void doDoes() {
 void setDoes() {
     auto& latest = lastDefinition();
     latest.code = doDoes;
-    latest.does = AADDR(nextInstruction) + 1;
+    latest.does = AADDR(next) + 1;
 }
 
 // DOES>
@@ -1767,8 +1733,8 @@ names start and end with with parentheses.
 // to put on the stack during execution.
 void doLiteral() {
     REQUIRE_DSTACK_AVAILABLE(1, "(lit)");
-    push(CELL(*nextInstruction));
-    ++nextInstruction;
+    push(CELL(*next));
+    ++next;
 }
 
 // (branch) ( -- )
@@ -1780,8 +1746,8 @@ void doLiteral() {
 //
 // The offset is in character units, but must be a multiple of the cell size.
 void branch() {
-    auto offset = reinterpret_cast<SCell>(*nextInstruction);
-    nextInstruction += offset / static_cast<SCell>(CellSize);
+    auto offset = reinterpret_cast<SCell>(*next);
+    next += offset / static_cast<SCell>(CellSize);
 }
 
 // (zbranch) ( flag -- )
@@ -1798,7 +1764,7 @@ void zbranch() {
     if (flag == False)
         branch();
     else
-        ++nextInstruction;
+        ++next;
 }
 
 /****
@@ -2261,12 +2227,13 @@ words.  This means that a Forth _fileid_ is going to be a pointer to a
 
 On some platforms, the C++ iostreams library may be unavailable or incomplete,
 or you may not want the overhead of linking in these functions.  In that case,
-define the macro `CXXFORTH_DISABLE_FILE_ACCESS` to disable compilation of these
+define the macro `CXXFORTH_ENABLE_FILE_ACCESS` to disable compilation of these
 words.
 
 ****/
 
-#ifndef CXXFORTH_DISABLE_FILE_ACCESS
+#ifdef CXXFORTH_ENABLE_FILE_ACCESS
+#warning HERE
 
 #define FILEID(x) reinterpret_cast<std::fstream*>(x)
 
@@ -2495,7 +2462,7 @@ void includeFile() {
     }
 }
 
-#endif // #ifndef CXXFORTH_DISABLE_FILE_ACCESS
+#endif // #ifndef CXXFORTH_ENABLE_FILE_ACCESS
 
 /****
 
@@ -2635,7 +2602,6 @@ void definePrimitives() {
         {"create",          create},
         {"depth",           depth},
         {"drop",            drop},
-        {"dup",             dup},
         {"emit",            emit},
         {"evaluate",        evaluate},
         {"execute",         execute},
@@ -2664,7 +2630,6 @@ void definePrimitives() {
         {"see",             see},
         {"source",          source},
         {"state",           state},
-        {"swap",            swap},
         {"system",          system},
         {"time&date",       timeAndDate},
         {"type",            type},
@@ -2676,7 +2641,7 @@ void definePrimitives() {
         {"words",           words},
         {"xor",             bitwiseXor},
         {"xt>name",         xtToName},
-#ifndef CXXFORTH_DISABLE_FILE_ACCESS
+#ifdef CXXFORTH_ENABLE_FILE_ACCESS
         {"bin",             bin},
         {"close-file",      closeFile},
         {"create-file",     createFile},
@@ -2744,7 +2709,9 @@ operations, double-cell stack operations are still useful.
 
 ****/
 
+    ": dup     0 pick ;",
     ": over    1 pick ;",
+    ": swap    1 roll ;",
     ": rot     2 roll ;",
     ": nip     swap drop ;",
     ": tuck    swap over ;",
@@ -2822,7 +2789,7 @@ Forth has a few words for incrementing/decrementing the top-of-stack value.
 `ERASE` fills a region with zeros.
 
 ****/
-
+    
     ": erase  0 fill ;",
 
 /****
@@ -2945,7 +2912,7 @@ put on the stack at runtime.
 Control Structures
 ------------------
 
-See the [Control Structures][jonesforthControlStructures] section of
+See the [Control Structures[jonesforthControlStructures] section of
 `jonesforth.f` for an explanation of how these words work.
 
 [jonesforthControlStructures]: http://git.annexia.org/?p=jonesforth.git;a=blob;f=jonesforth.f;h=5c1309574ae1165195a43250c19c822ab8681671;hb=HEAD#l118
@@ -3135,8 +3102,8 @@ the following:
 
 ****/
 
-#ifndef CXXFORTH_DISABLE_FILE_ACCESS
-
+#ifdef CXXFORTH_ENABLE_FILE_ACCESS
+#warning HELP
     ": included",
     "    r/o open-file abort\" included: unable to open file\"",
     "    dup include-file",
@@ -3144,7 +3111,7 @@ the following:
 
     ": include   bl word count included ;",
 
-#endif // #ifndef CXXFORTH_DISABLE_FILE_ACCESS
+#endif // #ifndef CXXFORTH_ENABLE_FILE_ACCESS
 
 /****
 
@@ -3233,6 +3200,7 @@ it.
     "    .\" Type \" .dquot .\" about\" .dquot .\"  for more information.  \"",
     "    .\" Type \" .dquot .\" bye\" .dquot .\"  to exit.\" cr ;",
 
+#ifdef CXXFORTH_ENABLE_FILE_ACCESS
     ": process-args",
     "    #args 1 = if welcome exit then",
     "    1 begin",
@@ -3244,6 +3212,9 @@ it.
     "    drop ;",
 
     ": main   process-args quit ;",
+#else
+    ": main welcome  quit ;",
+#endif
 };
 
 
@@ -3313,7 +3284,8 @@ extern "C" int cxxforth_main(int argc, const char** argv) {
 
 /****
 
-Finally we have our `main()`, which simply calls `cxxforth_main()`.
+Finally we have our `main()`. If there are no command-line arguments, it prints
+a banner and help message. Then it calls `cxxforth_main()`.
 
 You can define the macro `CXXFORTH_NO_MAIN` to inhibit generation of `main()`.
 This is useful for incorporating `cxxforth.cpp` into another application or
