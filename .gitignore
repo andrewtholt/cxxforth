@@ -6,3 +6,5 @@ build_optimized
 tags
 xcuserdata
 .vscode
+cscope.out
+Debug

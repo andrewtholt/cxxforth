@@ -1255,8 +1255,10 @@ void parse() {
         ++sourceOffset;
     }
 
+    /*
     if (sourceOffset == inputSize)
         throw AbortException(string("PARSE: Did not find expected delimiter \'" + string(1, delim) + "\'"));
+        */
 
     // Skip over the delimiter
     ++sourceOffset;
@@ -1874,6 +1876,81 @@ void words() {
         if (defn.isFindable()) cout << defn.name << " ";
     });
 }
+//
+// $SIFT ( ptr len -- )
+//
+void sift() {
+    REQUIRE_DSTACK_DEPTH(2, "$SIFT");
+
+    auto length = static_cast<std::streamsize>(*dTop);
+    pop();
+
+    char *caddr = CHARPTR(*dTop);
+//    auto caddr = CHARPTR(*dTop);
+    pop();
+
+    std::size_t found;
+    for(const Definition &defn : definitions) {
+        if (defn.isFindable()) {
+            if ( defn.name.find(caddr) !=std::string::npos) {
+                cout << defn.name << endl;
+            }
+        }
+    }
+
+}
+
+void displayLineHex(uint8_t *a) {
+    int i;
+    char buffer[8];
+
+    for(i=0;i<16;i++) {
+        cout << std::setfill('0') << std::setw(2) ;
+
+        sprintf(buffer," %02x",*(a++));
+        cout << buffer ;
+//        atlastTxString(buffer);
+    }
+}
+void displayLineAscii(uint8_t *a) {
+    int i;
+
+    cout << ':';
+
+    for(i=0;i<16;i++) {
+        if( (*a < 0x20 ) || (*a > 0x80 )) { 
+            cout << '.';
+//            atlastTxByte('.');
+            a++;
+        } else {
+            cout << (*(a++));
+//            atlastTxByte(*(a++));
+        }
+    }    
+    cout << endl;
+//    atlastTxByte('\r');
+//    atlastTxByte('\n');
+}
+
+void dump() {
+    REQUIRE_DSTACK_DEPTH(2, "$SIFT");
+
+    int length=static_cast<int>(*dTop);
+    pop();
+
+    char *caddr = CHARPTR(*dTop);
+    pop();
+
+    char buffer[16];
+    for(int i = 0; i < length; i+=16) {
+        sprintf(buffer,"%08x:", (uintptr_t)caddr);
+        cout << buffer ;
+        displayLineHex((uint8_t *) caddr );
+        displayLineAscii((uint8_t *) caddr );
+
+        caddr+=16;
+    }
+}
 
 /****
 
@@ -1933,6 +2010,7 @@ void seeDoes(AAddr does) {
     }
     cout << " ;";
 }
+
 
 // SEE ( "<spaces>name" -- )
 void see() {
@@ -2628,6 +2706,8 @@ void definePrimitives() {
         {"roll",            roll},
         {"rshift",          rshift},
         {"see",             see},
+        {"$sift",           sift},
+        {"dump",            dump},
         {"source",          source},
         {"state",           state},
         {"system",          system},
